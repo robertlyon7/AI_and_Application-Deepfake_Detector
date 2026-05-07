@@ -1,0 +1,10 @@
+data/
+weights/
+results/
+__pycache__/
+.ipynb_checkpoints/
+venv/
+*.pth
+*.pyc
+*.zip
+*.mp4

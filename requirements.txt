@@ -1,0 +1,16 @@
+torch
+torchvision
+timm
+efficientnet_pytorch
+facenet-pytorch
+opencv-python
+scikit-learn
+matplotlib
+seaborn
+grad-cam
+numpy
+tqdm
+gdown
+jupyter
+ipykernel
+Pillow
