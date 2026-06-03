@@ -17,6 +17,7 @@ from torchvision import transforms
 IMAGENET_MEAN = [0.0, 0.0, 0.0]
 IMAGENET_STD = [1.0, 1.0, 1.0]
 SBI_INPUT_SIZE = 380
+XCEPTION_INPUT_SIZE = 299
 
 
 def default_transform() -> Callable:
@@ -28,6 +29,19 @@ def default_transform() -> Callable:
     return transforms.Compose([
         transforms.Resize((SBI_INPUT_SIZE, SBI_INPUT_SIZE)),
         transforms.ToTensor(),
+    ])
+
+
+def xception_transform() -> Callable:
+    """Eval transform for the Cadene/timm `legacy_xception` model.
+
+    Xception was trained with inputs in [-1, 1] (mean=0.5, std=0.5) at 299x299.
+    The DeepfakeBench FF++ Xception checkpoint follows the same convention.
+    """
+    return transforms.Compose([
+        transforms.Resize((XCEPTION_INPUT_SIZE, XCEPTION_INPUT_SIZE)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
     ])
 
 

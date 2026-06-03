@@ -194,15 +194,8 @@ def _find_example_frame_from_predictions(predictions, video_name: str) -> str | 
     return None
 
 
-def visualize_samples(detector, manifest_path: str, dataset_name: str,
-                      n_correct: int = 8, n_wrong: int = 4,
-                      predictions: list | None = None) -> Path:
-    """Visualize a grid of correct + misclassified samples with Grad-CAM overlays.
-
-    If `predictions` is not supplied, this function will run inference on the
-    full manifest via `detector.predict_dataset(manifest_path)`.
-    """
-    # Reuse prior predictions when available to avoid expensive re-inference.
+def _gradcam_picks(detector, manifest_path, predictions, n_correct, n_wrong):
+    """Shared helper: return a list of (prediction, face_rgb, cam_img) tuples."""
     if predictions is None:
         predictions = detector.predict_dataset(manifest_path)
 
@@ -214,45 +207,95 @@ def visualize_samples(detector, manifest_path: str, dataset_name: str,
     random.shuffle(wrong)
 
     picks = correct[:n_correct] + wrong[:n_wrong]
-    if len(picks) == 0:
+    transform = default_transform()
+
+    rendered = []
+    for pred in picks:
+        frame_path = pred["frames"][0]
+        face_rgb = np.array(Image.open(frame_path).convert("RGB"))
+        tensor = transform(Image.fromarray(face_rgb))
+        cam_img = generate_gradcam(detector.model, tensor, face_rgb)
+        rendered.append((pred, face_rgb, cam_img))
+    return rendered
+
+
+def visualize_samples(detector, manifest_path: str, dataset_name: str,
+                      n_correct: int = 8, n_wrong: int = 4,
+                      predictions: list | None = None,
+                      layout: str = "vertical",
+                      samples_per_row: int = 6) -> Path:
+    """Visualize correct + misclassified samples with Grad-CAM overlays.
+
+    layout="vertical"   -> one sample per row (original | grad-cam). Tall image.
+    layout="horizontal" -> samples tiled across the page, each shown as
+                           original (top) above grad-cam (bottom). Wide image,
+                           suited to a 16:9 presentation slide.
+
+    `samples_per_row` only applies to the horizontal layout.
+    """
+    rendered = _gradcam_picks(detector, manifest_path, predictions, n_correct, n_wrong)
+    if not rendered:
         print(f"[visualize] No samples available for {dataset_name}.")
         return RESULTS_DIR / f"{dataset_name}_gradcam_samples.png"
 
-    transform = default_transform()
+    def _caption(pred):
+        true_name = "FAKE" if pred["true_label"] == 1 else "REAL"
+        pred_name = "FAKE" if pred["pred_label"] == 1 else "REAL"
+        ok = pred["pred_label"] == pred["true_label"]
+        mark = "OK" if ok else "X"
+        return f"[{mark}] T:{true_name} P:{pred_name} ({pred['pred_score']:.2f})"
 
-    # Grid: one row per sample, two columns (face | grad-cam).
-    n_rows = len(picks)
+    if layout == "horizontal":
+        # Each sample occupies one column, with the original stacked above its
+        # Grad-CAM. Samples wrap onto new (double) rows every `samples_per_row`.
+        n = len(rendered)
+        per_row = max(1, min(samples_per_row, n))
+        n_blocks = int(np.ceil(n / per_row))          # how many sample-rows
+        n_grid_rows = 2 * n_blocks                     # original + cam per block
+
+        fig, axes = plt.subplots(
+            n_grid_rows, per_row,
+            figsize=(2.2 * per_row, 2.7 * n_blocks),
+        )
+        axes = np.atleast_2d(axes)
+
+        # Turn every axis off first; we re-enable the ones we draw on.
+        for ax in axes.ravel():
+            ax.axis("off")
+
+        for idx, (pred, face_rgb, cam_img) in enumerate(rendered):
+            block = idx // per_row
+            col = idx % per_row
+            top = axes[2 * block, col]       # original
+            bot = axes[2 * block + 1, col]   # grad-cam
+
+            top.imshow(face_rgb)
+            top.set_title(_caption(pred), fontsize=7.5)
+            bot.imshow(cam_img)
+
+        fig.suptitle(f"Grad-CAM samples — {dataset_name}", fontsize=12)
+        out_path = RESULTS_DIR / f"{dataset_name}_gradcam_samples_horizontal.png"
+        fig.tight_layout()
+        fig.savefig(out_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        return out_path
+
+    # --- default: vertical layout (one sample per row) ---
+    n_rows = len(rendered)
     fig, axes = plt.subplots(n_rows, 2, figsize=(6, 2.8 * n_rows))
     if n_rows == 1:
         axes = np.array([axes])
 
-    for i, pred in enumerate(picks):
-        frame_path = pred["frames"][0]
-        face_rgb = np.array(Image.open(frame_path).convert("RGB"))
-        tensor = transform(Image.fromarray(face_rgb))
-
-        # Generate Grad-CAM overlay.
-        cam_img = generate_gradcam(detector.model, tensor, face_rgb)
-
-        true_name = "FAKE" if pred["true_label"] == 1 else "REAL"
-        pred_name = "FAKE" if pred["pred_label"] == 1 else "REAL"
-        status = "correct" if pred["pred_label"] == pred["true_label"] else "wrong"
-        title = (f"[{status}] True: {true_name} | Pred: {pred_name} | "
-                 f"Score: {pred['pred_score']:.2f}")
-
+    for i, (pred, face_rgb, cam_img) in enumerate(rendered):
         axes[i, 0].imshow(face_rgb)
         axes[i, 0].set_title("Original", fontsize=9)
         axes[i, 0].axis("off")
-
         axes[i, 1].imshow(cam_img)
         axes[i, 1].set_title("Grad-CAM", fontsize=9)
         axes[i, 1].axis("off")
-
-        # Row-level caption as a suptitle-like label on the left column.
-        axes[i, 0].set_ylabel(title, fontsize=8)
+        axes[i, 0].set_ylabel(_caption(pred), fontsize=8)
 
     fig.suptitle(f"Grad-CAM samples — {dataset_name}", fontsize=12)
-
     out_path = RESULTS_DIR / f"{dataset_name}_gradcam_samples.png"
     fig.tight_layout()
     fig.savefig(out_path, dpi=130)

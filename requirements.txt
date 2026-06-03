@@ -2,6 +2,7 @@ torch
 torchvision
 timm
 efficientnet_pytorch
+shap
 facenet-pytorch
 opencv-python
 scikit-learn
